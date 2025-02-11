@@ -98,7 +98,7 @@ if __name__ == "__main__":
     
     print(f"{CYAN}")
     print(figlet_format("RECONOVA", font="slant"))
-    print(figlet_format("           - ROHITH_ABR", font="standard"))
+    print(figlet_format("           - ROHITH_ABR", font="slant"))
     print(f"{RESET}")
 
 
