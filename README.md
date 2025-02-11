@@ -14,6 +14,7 @@ A **powerful and easy-to-use** subdomain enumeration tool built in Python.
 ```bash
 git clone https://github.com/rohith-abr/reconova.git
 cd reconova
+pip3 install -r requirements.txt
 chmod +x setup.sh
 ./setup.sh
 ```
@@ -31,5 +32,5 @@ Enter the domain when prompted.
 To save results to a file:
 
 ```bash
-python3 reconova.py example.com -o results.txt
+python3 reconova.py targetwebsite.com -o results.txt
 ```
