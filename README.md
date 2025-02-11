@@ -12,7 +12,7 @@ A **powerful and easy-to-use** subdomain enumeration tool built in Python.
 ## Installation
 
 ```bash
-git clone https://github.com/YOUR-GITHUB-USERNAME/reconova.git
+git clone https://github.com/rohith-abr/reconova.git
 cd reconova
 chmod +x setup.sh
 ./setup.sh
