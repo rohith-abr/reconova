@@ -59,6 +59,8 @@ def fetch_threatminer_subdomains(domain):
 def get_subdomains(domain):
     print(f"{YELLOW}[+] Running Reconova to gather subdomains...{RESET}")
 
+    subdomains = set()
+
     if is_subfinder_installed():
         try:
             output = subprocess.run(
@@ -67,24 +69,21 @@ def get_subdomains(domain):
                 stderr=subprocess.DEVNULL,
                 text=True
             )
-            subdomains = set(output.stdout.strip().split("\n"))
-            return subdomains
+            subdomains.update(output.stdout.strip().split("\n"))
         except FileNotFoundError:
             pass
 
-    print(f"{RED}[!] Subfinder NOT found! Using API-based enumeration instead.{RESET}")
+    subdomains.update(fetch_crtsh_subdomains(domain))
+    subdomains.update(fetch_anubis_subdomains(domain))
+    subdomains.update(fetch_threatminer_subdomains(domain))
 
-    crtsh_subdomains = fetch_crtsh_subdomains(domain)
-    anubis_subdomains = fetch_anubis_subdomains(domain)
-    threatminer_subdomains = fetch_threatminer_subdomains(domain)
+    subdomains = {s for s in subdomains if domain in s}
 
-    all_subdomains = sorted(set(crtsh_subdomains | anubis_subdomains | threatminer_subdomains))
-
-    if not all_subdomains:
-        print(f"{RED}[!] No subdomains found for {domain}. Exiting.{RESET}")
+    if not subdomains:
+        print(f"{RED}[!] No subdomains found. Try again later.{RESET}")
         exit(1)
 
-    return all_subdomains
+    return sorted(subdomains)
 
 def check_http_status(subdomain):
     headers = {"User-Agent": "Mozilla/5.0"}
