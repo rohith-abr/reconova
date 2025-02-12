@@ -1,9 +1,11 @@
+#!/usr/bin/env python3
 
 import os
 import subprocess
 import argparse
 import concurrent.futures
 import requests
+import socket
 from pyfiglet import figlet_format
 
 GREEN = "\033[92m"
@@ -56,6 +58,43 @@ def fetch_threatminer_subdomains(domain):
         pass
     return subdomains
 
+def fetch_rapiddns_subdomains(domain):
+    """Fetch subdomains from RapidDNS."""
+    url = f"https://rapiddns.io/subdomain/{domain}?full=1"
+    subdomains = set()
+    try:
+        response = requests.get(url, timeout=10)
+        if response.status_code == 200:
+            for line in response.text.split("\n"):
+                if domain in line:
+                    subdomains.add(line.strip())
+    except requests.RequestException:
+        pass
+    return subdomains
+
+def brute_force_subdomains(domain, wordlist="wordlists/common.txt"):
+    subdomains = set()
+    try:
+        with open(wordlist, "r") as file:
+            words = {line.strip().lower() for line in file if line.strip()}
+
+        def resolve(sub):
+            full_domain = f"{sub}.{domain}"
+            try:
+                socket.gethostbyname(full_domain)
+                return full_domain
+            except socket.gaierror:
+                return None
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+            results = executor.map(resolve, words)
+            for result in results:
+                if result:
+                    subdomains.add(result)
+    except FileNotFoundError:
+        print(f"{RED}[!] Wordlist not found! Skipping brute-force.{RESET}")
+    return subdomains
+
 def get_subdomains(domain):
     print(f"{YELLOW}[+] Running Reconova to gather subdomains...{RESET}")
 
@@ -76,6 +115,8 @@ def get_subdomains(domain):
     subdomains.update(fetch_crtsh_subdomains(domain))
     subdomains.update(fetch_anubis_subdomains(domain))
     subdomains.update(fetch_threatminer_subdomains(domain))
+    subdomains.update(fetch_rapiddns_subdomains(domain))
+    subdomains.update(brute_force_subdomains(domain))
 
     subdomains = {s for s in subdomains if domain in s}
 
