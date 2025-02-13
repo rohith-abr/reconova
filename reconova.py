@@ -1,13 +1,11 @@
-#!/usr/bin/env python3
 
 import os
-import subprocess
 import argparse
 import concurrent.futures
 import requests
-import socket
 from pyfiglet import figlet_format
 
+# ANSI Colors
 GREEN = "\033[92m"
 YELLOW = "\033[93m"
 RED = "\033[91m"
@@ -15,119 +13,45 @@ MAGENTA = "\033[95m"
 CYAN = "\033[96m"
 RESET = "\033[0m"
 
-def is_subfinder_installed():
-    try:
-        subprocess.run(["subfinder", "-h"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
-        return True
-    except FileNotFoundError:
-        return False
-
-def fetch_crtsh_subdomains(domain):
-    url = f"https://crt.sh/?q=%25.{domain}&output=json"
+def fetch_alienvault_subdomains(domain):
+    
+    url = f"https://otx.alienvault.com/api/v1/indicators/domain/{domain}/passive_dns"
     subdomains = set()
+
     try:
-        response = requests.get(url, timeout=10)
+        headers = {"User-Agent": "Mozilla/5.0"}
+        response = requests.get(url, headers=headers, timeout=10)
+
         if response.status_code == 200:
-            for entry in response.json():
-                subdomains.add(entry["name_value"].strip().lower())
-    except requests.RequestException:
-        pass
-    return subdomains
+            json_data = response.json()
+            if "passive_dns" in json_data:
+                for record in json_data["passive_dns"]:
+                    subdomains.add(record["hostname"])
+        else:
+            print(f"{RED}[!] AlienVault API returned an error: {response.status_code}{RESET}")
+    except requests.RequestException as e:
+        print(f"{RED}[!] Error fetching subdomains: {e}{RESET}")
 
-def fetch_anubis_subdomains(domain):
-    url = f"https://jldc.me/anubis/subdomains/{domain}"
-    subdomains = set()
-    try:
-        response = requests.get(url, timeout=10)
-        if response.status_code == 200:
-            subdomains.update(response.json())
-    except requests.RequestException:
-        pass
-    return subdomains
-
-def fetch_threatminer_subdomains(domain):
-    url = f"https://api.threatminer.org/v2/domain.php?q={domain}&rt=5"
-    subdomains = set()
-    try:
-        response = requests.get(url, timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            if "results" in data:
-                subdomains.update(data["results"])
-    except requests.RequestException:
-        pass
-    return subdomains
-
-def fetch_rapiddns_subdomains(domain):
-    """Fetch subdomains from RapidDNS."""
-    url = f"https://rapiddns.io/subdomain/{domain}?full=1"
-    subdomains = set()
-    try:
-        response = requests.get(url, timeout=10)
-        if response.status_code == 200:
-            for line in response.text.split("\n"):
-                if domain in line:
-                    subdomains.add(line.strip())
-    except requests.RequestException:
-        pass
-    return subdomains
-
-def brute_force_subdomains(domain, wordlist="wordlists/common.txt"):
-    subdomains = set()
-    try:
-        with open(wordlist, "r") as file:
-            words = {line.strip().lower() for line in file if line.strip()}
-
-        def resolve(sub):
-            full_domain = f"{sub}.{domain}"
-            try:
-                socket.gethostbyname(full_domain)
-                return full_domain
-            except socket.gaierror:
-                return None
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
-            results = executor.map(resolve, words)
-            for result in results:
-                if result:
-                    subdomains.add(result)
-    except FileNotFoundError:
-        print(f"{RED}[!] Wordlist not found! Skipping brute-force.{RESET}")
     return subdomains
 
 def get_subdomains(domain):
-    print(f"{YELLOW}[+] Running Reconova to gather subdomains...{RESET}")
+   
+    print(f"{YELLOW}[+] Running Reconova to gather subdomain for {domain}...{RESET}")
 
-    subdomains = set()
-
-    if is_subfinder_installed():
-        try:
-            output = subprocess.run(
-                ["subfinder", "-d", domain],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                text=True
-            )
-            subdomains.update(output.stdout.strip().split("\n"))
-        except FileNotFoundError:
-            pass
-
-    subdomains.update(fetch_crtsh_subdomains(domain))
-    subdomains.update(fetch_anubis_subdomains(domain))
-    subdomains.update(fetch_threatminer_subdomains(domain))
-    subdomains.update(fetch_rapiddns_subdomains(domain))
-    subdomains.update(brute_force_subdomains(domain))
-
-    subdomains = {s for s in subdomains if domain in s}
+    subdomains = fetch_alienvault_subdomains(domain)
 
     if not subdomains:
         print(f"{RED}[!] No subdomains found. Try again later.{RESET}")
         exit(1)
 
-    return sorted(subdomains)
+    subdomains = sorted(subdomains)  # Sort for readability
+    print(f"{GREEN}[✓] Found {len(subdomains)} subdomains.{RESET}")
+    return subdomains
 
 def check_http_status(subdomain):
+
     headers = {"User-Agent": "Mozilla/5.0"}
+
     try:
         response = requests.get(f"https://{subdomain}", headers=headers, timeout=10, allow_redirects=True)
         status_chain = " → ".join([str(r.status_code) for r in response.history] + [str(response.status_code)])
@@ -140,6 +64,7 @@ def check_http_status(subdomain):
         return subdomain, "000 Unknown Error"
 
 def colorize_status(status):
+    """Add color coding to status codes."""
     if "200" in status:
         return f"{GREEN}{status}{RESET}"
     elif "301" in status or "302" in status:
@@ -154,10 +79,10 @@ def colorize_status(status):
         return f"{RED}{status}{RESET}"
 
 def enumerate_subdomains(domain, output_file):
+    """Run full subdomain + HTTP status scan."""
     print(f"\n{YELLOW}[+] Started Reconova...{RESET}\n")
 
     subdomains = get_subdomains(domain)
-    print(f"{GREEN}[✓] Found {len(subdomains)} subdomains.{RESET}")
 
     print(f"\n{YELLOW}[+] Checking HTTP status codes...\n{RESET}")
     results_dict = {}
