@@ -1,9 +1,12 @@
+#!/usr/bin/env python3
 
 import os
 import argparse
 import concurrent.futures
 import requests
+import subprocess
 from pyfiglet import figlet_format
+import re
 
 # ANSI Colors
 GREEN = "\033[92m"
@@ -13,43 +16,134 @@ MAGENTA = "\033[95m"
 CYAN = "\033[96m"
 RESET = "\033[0m"
 
-def fetch_alienvault_subdomains(domain):
-    
-    url = f"https://otx.alienvault.com/api/v1/indicators/domain/{domain}/passive_dns"
-    subdomains = set()
+# Regular Expression to Validate Domain Names
+DOMAIN_REGEX = re.compile(r"^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
 
+### 🔹 Check if Subfinder is Installed ###
+def is_subfinder_installed():
+    """Check if Subfinder is installed."""
     try:
-        headers = {"User-Agent": "Mozilla/5.0"}
-        response = requests.get(url, headers=headers, timeout=10)
+        subprocess.run(["subfinder", "-h"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        return True  # Subfinder is installed
+    except FileNotFoundError:
+        return False  # Subfinder is NOT installed
 
+### 🔹 Fetch Subdomains from APIs (if Subfinder is missing) ###
+def fetch_certspotter_subdomains(domain):
+    """Fetch subdomains from CertSpotter API."""
+    url = f"https://certspotter.com/api/v1/issuances?domain={domain}&include_subdomains=true&expand=dns_names"
+    subdomains = set()
+    try:
+        response = requests.get(url, timeout=10)
         if response.status_code == 200:
             json_data = response.json()
-            if "passive_dns" in json_data:
-                for record in json_data["passive_dns"]:
-                    subdomains.add(record["hostname"])
-        else:
-            print(f"{RED}[!] AlienVault API returned an error: {response.status_code}{RESET}")
-    except requests.RequestException as e:
-        print(f"{RED}[!] Error fetching subdomains: {e}{RESET}")
-
+            for entry in json_data:
+                for sub in entry.get("dns_names", []):
+                    if DOMAIN_REGEX.match(sub.strip().lower()):
+                        subdomains.add(sub.strip().lower())
+    except requests.RequestException:
+        pass  
     return subdomains
 
-def get_subdomains(domain):
-   
-    print(f"{YELLOW}[+] Running Reconova to gather subdomain for {domain}...{RESET}")
+def fetch_bufferover_subdomains(domain):
+    """Fetch subdomains from Bufferover API."""
+    url = f"https://dns.bufferover.run/dns?q={domain}"
+    subdomains = set()
+    try:
+        response = requests.get(url, timeout=10)
+        if response.status_code == 200:
+            json_data = response.json()
+            for entry in json_data.get("FDNS_A", []):
+                sub = entry.split(",")[1].strip().lower()
+                if DOMAIN_REGEX.match(sub):
+                    subdomains.add(sub)
+    except requests.RequestException:
+        pass  
+    return subdomains
 
-    subdomains = fetch_alienvault_subdomains(domain)
+def fetch_hackertarget_subdomains(domain):
+    """Fetch subdomains from HackerTarget API."""
+    url = f"https://api.hackertarget.com/hostsearch/?q={domain}"
+    subdomains = set()
+    try:
+        response = requests.get(url, timeout=10)
+        if response.status_code == 200:
+            for line in response.text.split("\n"):
+                sub = line.split(",")[0].strip().lower()
+                if DOMAIN_REGEX.match(sub):
+                    subdomains.add(sub)
+    except requests.RequestException:
+        pass  
+    return subdomains
+
+def fetch_rapiddns_subdomains(domain):
+    """Fetch subdomains from RapidDNS API."""
+    url = f"https://rapiddns.io/subdomain/{domain}?full=1"
+    subdomains = set()
+    try:
+        response = requests.get(url, timeout=10)
+        if response.status_code == 200:
+            for line in response.text.split("\n"):
+                if domain in line:
+                    subdomains.add(line.strip().split(",")[0].lower())
+    except requests.RequestException:
+        pass  
+    return subdomains
+
+def fetch_alienvault_subdomains(domain):
+    """Fetch subdomains from AlienVault API."""
+    url = f"https://otx.alienvault.com/api/v1/indicators/domain/{domain}/passive_dns"
+    subdomains = set()
+    try:
+        response = requests.get(url, timeout=10)
+        if response.status_code == 200:
+            json_data = response.json()
+            for record in json_data.get("passive_dns", []):
+                sub = record.get("hostname", "").strip().lower()
+                if DOMAIN_REGEX.match(sub):
+                    subdomains.add(sub)
+    except requests.RequestException:
+        pass  
+    return subdomains
+
+### 🔹 Get Subdomains Using Subfinder or API Replication ###
+def get_subdomains(domain):
+    """Uses Subfinder if available, otherwise replicates Subfinder using APIs."""
+    print(f"{YELLOW}[+] Gathering subdomains for {domain}...{RESET}")
+
+    subdomains = set()
+
+    if is_subfinder_installed():
+        try:
+            output = subprocess.run(
+                ["subfinder", "-d", domain],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True
+            )
+            subdomains.update(output.stdout.strip().split("\n"))
+        except FileNotFoundError:
+            pass  
+
+    # If Subfinder is missing or didn't return subdomains, use APIs to replicate its functionality
+    if not subdomains:
+        subdomains.update(fetch_certspotter_subdomains(domain))
+        subdomains.update(fetch_bufferover_subdomains(domain))
+        subdomains.update(fetch_hackertarget_subdomains(domain))
+        subdomains.update(fetch_rapiddns_subdomains(domain))
+        subdomains.update(fetch_alienvault_subdomains(domain))
 
     if not subdomains:
         print(f"{RED}[!] No subdomains found. Try again later.{RESET}")
         exit(1)
 
-    subdomains = sorted(subdomains)  # Sort for readability
-    print(f"{GREEN}[✓] Found {len(subdomains)} subdomains.{RESET}")
-    return subdomains
+    unique_subdomains = sorted(set(subdomains))  
+    print(f"{GREEN}[✓] Found {len(unique_subdomains)} unique subdomains.{RESET}")
+    return unique_subdomains
 
+### 🔹 Check HTTP Status Codes ###
 def check_http_status(subdomain):
-
+    """Check HTTP status code for each subdomain."""
     headers = {"User-Agent": "Mozilla/5.0"}
 
     try:
@@ -63,23 +157,9 @@ def check_http_status(subdomain):
     except requests.RequestException:
         return subdomain, "000 Unknown Error"
 
-def colorize_status(status):
-    """Add color coding to status codes."""
-    if "200" in status:
-        return f"{GREEN}{status}{RESET}"
-    elif "301" in status or "302" in status:
-        return f"{YELLOW}{status}{RESET}"
-    elif "400" in status or "404" in status:
-        return f"{RED}{status}{RESET}"
-    elif "500" in status or "503" in status:
-        return f"{MAGENTA}{status}{RESET}"
-    elif "408" in status:
-        return f"{CYAN}{status}{RESET}"
-    else:
-        return f"{RED}{status}{RESET}"
-
+### 🔹 Run Full Scan ###
 def enumerate_subdomains(domain, output_file):
-    """Run full subdomain + HTTP status scan."""
+    """Run full subdomain enumeration + HTTP status scan."""
     print(f"\n{YELLOW}[+] Started Reconova...{RESET}\n")
 
     subdomains = get_subdomains(domain)
@@ -99,11 +179,9 @@ def enumerate_subdomains(domain, output_file):
                 f.write(f"{subdomain} | {status}\n")
 
     for subdomain, status in sorted_results:
-        print(f"{subdomain} | {colorize_status(status)}")
+        print(f"{subdomain} | {status}")
 
-    if output_file:
-        print(f"\n{GREEN}[\u2713] Results saved to {output_file}{RESET}")
-
+### 🔹 Main Execution ###
 if __name__ == "__main__":
     os.system("clear")
 
