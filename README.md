@@ -12,11 +12,11 @@ A **powerful and easy-to-use** subdomain enumeration tool built in Python.
 ## Installation
 
 ```bash
+sudo apt update && sudo apt upgrade -y
 git clone https://github.com/rohith-abr/reconova.git
 cd reconova
 pip3 install -r requirements.txt
-chmod +x setup.sh
-./setup.sh
+python3 reconova.py
 ```
 
 ## Usage
